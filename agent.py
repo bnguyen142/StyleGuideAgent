@@ -18,7 +18,37 @@ Usage (once implemented):
     print(result["error"])   # None on success
 """
 
+import re
+
 from tools import search_listings, suggest_outfit, create_fit_card
+
+
+# ── query parsing ────────────────────────────────────────────────────────────
+
+def _parse_query(query: str) -> dict:
+    """
+    Extract description, size, and max_price from a natural language query
+    using simple regex matching. Whatever's left after pulling out the size
+    and price phrases becomes the description.
+    """
+    remaining = query
+    size = None
+    max_price = None
+
+    size_match = re.search(r"size\s+([A-Za-z0-9/]+)", remaining, re.IGNORECASE)
+    if size_match:
+        size = size_match.group(1)
+        remaining = remaining[:size_match.start()] + remaining[size_match.end():]
+
+    price_match = re.search(r"under\s+\$?(\d+(?:\.\d+)?)", remaining, re.IGNORECASE)
+    if price_match:
+        max_price = float(price_match.group(1))
+        remaining = remaining[:price_match.start()] + remaining[price_match.end():]
+
+    description = re.sub(r"[,.]", " ", remaining)
+    description = re.sub(r"\s+", " ", description).strip()
+
+    return {"description": description, "size": size, "max_price": max_price}
 
 
 # ── session state ─────────────────────────────────────────────────────────────
@@ -92,9 +122,33 @@ def run_agent(query: str, wardrobe: dict) -> dict:
     Before writing code, complete the Planning Loop and State Management sections
     of planning.md — your implementation should match what you described there.
     """
-    # TODO: implement the planning loop
     session = _new_session(query, wardrobe)
-    session["error"] = "Planning loop not yet implemented."
+
+    session["parsed"] = _parse_query(query)
+
+    session["search_results"] = search_listings(
+        session["parsed"]["description"],
+        size=session["parsed"]["size"],
+        max_price=session["parsed"]["max_price"],
+    )
+
+    if not session["search_results"]:
+        session["error"] = (
+            "No listings matched your search. Try removing the size filter, "
+            "raising your max price, or using broader/different keywords."
+        )
+        return session
+
+    session["selected_item"] = session["search_results"][0]
+
+    session["outfit_suggestion"] = suggest_outfit(
+        session["selected_item"], session["wardrobe"]
+    )
+
+    session["fit_card"] = create_fit_card(
+        session["outfit_suggestion"], session["selected_item"]
+    )
+
     return session
 
 
